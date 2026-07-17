@@ -42,6 +42,7 @@ type FormState = {
   spender: string;
   txData: string;
   agentId: string;
+  actionValueUsd: number;
   maxAllowedRiskScore: number;
   requireReviewAbove: number;
   spendLimitUsd: number;
@@ -59,11 +60,11 @@ type TractionSummary = {
   mcpCalls: number;
   premiumCalls: number;
   paymentProofCalls: number;
+  verifiedPaymentCalls: number;
   blockedActions: number;
   qualifiedRevenueUsd: number;
-  demoRevenueUsd: number;
-  projectedRevenueUsd?: number;
-  estimatedValueProtectedUsd: number;
+  projectedRevenueUsd: number;
+  blockedActionValueUsd: number;
 };
 
 type ReadinessSummary = {
@@ -93,6 +94,7 @@ const initialForm: FormState = {
   spender: exampleSpender,
   txData: exampleUnlimitedApprovalCalldata,
   agentId: exampleInputs.policy.agentId ?? "okx-agent-risk-gate",
+  actionValueUsd: exampleInputs.policy.actionValueUsd ?? 500,
   maxAllowedRiskScore: exampleInputs.policy.policy?.maxAllowedRiskScore ?? 64,
   requireReviewAbove: exampleInputs.policy.policy?.requireReviewAbove ?? 35,
   spendLimitUsd: exampleInputs.policy.policy?.spendLimitUsd ?? 500,
@@ -134,14 +136,14 @@ const scanConfig: Record<
     label: "Token",
     icon: <Coins size={18} />,
     path: "/api/scan/token",
-    description: "Contract privileges, proxy risk, verification, and rug-pull signals.",
+    description: "Contract metadata, proxy/admin controls, and bytecode risk indicators.",
     action: "Scan token"
   },
   wallet: {
     label: "Wallet",
     icon: <Wallet size={18} />,
     path: "/api/scan/wallet",
-    description: "Native balance and account type read live from RPC.",
+    description: "Native balance and account type when a live RPC is configured.",
     action: "Scan wallet"
   }
 };
@@ -173,6 +175,7 @@ function App() {
       });
 
       const payload = (await response.json()) as RiskResponse | { error?: { message?: string } };
+      setApiOnline(true);
 
       if (!response.ok) {
         throw new Error("error" in payload ? payload.error?.message ?? "Scan failed" : "Scan failed");
@@ -225,6 +228,7 @@ function App() {
             wallet: exampleInputs.policy.wallet ?? current.wallet,
             agentId: exampleInputs.policy.agentId ?? current.agentId,
             chainId: exampleInputs.policy.chainId,
+            actionValueUsd: exampleInputs.policy.actionValueUsd ?? current.actionValueUsd,
             maxAllowedRiskScore: exampleInputs.policy.policy?.maxAllowedRiskScore ?? current.maxAllowedRiskScore,
             requireReviewAbove: exampleInputs.policy.policy?.requireReviewAbove ?? current.requireReviewAbove,
             spendLimitUsd: exampleInputs.policy.policy?.spendLimitUsd ?? current.spendLimitUsd,
@@ -244,6 +248,7 @@ function App() {
       txData: exampleUnlimitedApprovalCalldata,
       chainId: exampleInputs.policy.chainId,
       agentId: exampleInputs.policy.agentId ?? "okx-agent-risk-gate",
+      actionValueUsd: 500,
       maxAllowedRiskScore: 64,
       requireReviewAbove: 35,
       spendLimitUsd: 500,
@@ -260,9 +265,10 @@ function App() {
       wallet: exampleWallets[1].value,
       tokenAddress: exampleTokens[1].value,
       spender: "0x000000000022d473030f116ddee9f6b43ac78ba3",
-      txData: "transfer 10 USDC to a known settlement wallet",
+      txData: "transfer 10 USDC to a settlement wallet",
       chainId: 8453 as ChainId,
       agentId: "okx-agent-conservative",
+      actionValueUsd: 10,
       maxAllowedRiskScore: 64,
       requireReviewAbove: 35,
       spendLimitUsd: 1000,
@@ -293,7 +299,7 @@ function App() {
           </span>
           <div className="brand-text">
             <h1>OKX Sentinel</h1>
-            <p>Pre-transaction risk firewall for wallets, tokens &amp; AI agents</p>
+            <p>Free A2MCP pre-transaction risk firewall for wallets, tokens &amp; AI agents</p>
           </div>
         </div>
         <div className="topbar-status">
@@ -361,7 +367,7 @@ function App() {
                 label="Token contract"
                 value={form.tokenAddress}
                 onChange={(tokenAddress) => setForm({ ...form, tokenAddress })}
-                helper="Checks proxy setup, admin privileges, verification, and rug-pull indicators."
+                helper="Checks metadata, proxy setup, admin controls, and privileged-function indicators."
               />
             )}
 
@@ -415,6 +421,16 @@ function App() {
                 <fieldset className="policy-fieldset">
                   <legend>Policy limits</legend>
                   <div className="policy-grid">
+                    <label className="field compact">
+                      <span className="field-label">Action value (USD)</span>
+                      <input
+                        type="number"
+                        min={0.01}
+                        step="0.01"
+                        value={form.actionValueUsd}
+                        onChange={(event) => setForm({ ...form, actionValueUsd: Number(event.target.value) })}
+                      />
+                    </label>
                     <label className="field compact">
                       <span className="field-label">Block above</span>
                       <input
@@ -485,8 +501,8 @@ function App() {
               <button type="button" className="example-chip" onClick={loadSafeTransferExample} disabled={isLoading}>
                 <ShieldCheck size={15} />
                 <span>
-                  Safe transfer
-                  <small>gets cleared</small>
+                  Low-risk intent
+                  <small>allowed by policy</small>
                 </span>
               </button>
             </div>
@@ -741,7 +757,7 @@ function SigningPanel({ result }: { result?: RiskResponse }) {
 function ActivityStrip({ traction }: { traction?: TractionSummary }) {
   const checked = traction?.totalCalls ?? 0;
   const blocked = traction?.blockedActions ?? 0;
-  const protectedUsd = traction?.estimatedValueProtectedUsd ?? 0;
+  const blockedValueUsd = traction?.blockedActionValueUsd ?? 0;
 
   return (
     <section className="activity">
@@ -759,8 +775,8 @@ function ActivityStrip({ traction }: { traction?: TractionSummary }) {
           <span>Risks blocked</span>
         </div>
         <div className="activity-metric">
-          <strong>{protectedUsd > 0 ? `$${formatMoney(protectedUsd)}` : "—"}</strong>
-          <span>Value protected</span>
+          <strong>{blockedValueUsd > 0 ? `$${formatMoney(blockedValueUsd)}` : "—"}</strong>
+          <span>Blocked action value</span>
         </div>
       </div>
     </section>
@@ -819,7 +835,7 @@ function DeveloperPanel({ result, onCopy, copied }: { result?: RiskResponse; onC
       <div className="collapsible-head static">
         <Fingerprint size={16} />
         <span className="collapsible-title">Structured API response</span>
-        <span className="collapsible-meta">JSON · MCP-ready</span>
+        <span className="collapsible-meta">JSON · MCP 2025-11-25</span>
         <div className="collapsible-actions">
           <button type="button" className="mini-button" onClick={onCopy} disabled={!result}>
             {copied ? <Check size={14} /> : <Copy size={14} />}
@@ -851,7 +867,7 @@ function buildVerdict(result?: RiskResponse): { tone: Tone; headline: string; su
     return { tone: "caution", headline: "Needs review", subline: "Confirm the details before signing." };
   }
   if (decision === "allow") {
-    return { tone: "safe", headline: "Cleared", subline: "No blocking risks were detected." };
+    return { tone: "safe", headline: "Allowed by policy", subline: "No configured blocking condition was detected." };
   }
 
   const sublineByLevel: Record<RiskLevel, string> = {
@@ -914,6 +930,7 @@ function buildPayload(form: FormState) {
       chainId: form.chainId,
       wallet: form.wallet,
       agentId: form.agentId,
+      actionValueUsd: form.actionValueUsd,
       policy: {
         maxAllowedRiskScore: form.maxAllowedRiskScore,
         requireReviewAbove: form.requireReviewAbove,
@@ -939,8 +956,4 @@ function formatMoney(value: number): string {
   return new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(value);
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+ReactDOM.createRoot(document.getElementById("root")!).render(<App />);

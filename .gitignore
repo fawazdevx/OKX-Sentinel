@@ -1,6 +1,12 @@
 node_modules
 dist
+docs/demo-script.md
+docs/submission-checklist.md
+docs/social-launch.md
+docs/final-submission.md
 .env
 .DS_Store
 coverage
 *.log
+.agents
+.codex

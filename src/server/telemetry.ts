@@ -1,6 +1,12 @@
 import type { Request } from "express";
 import { appendFile } from "node:fs/promises";
-import { paidToolCatalog, type PaidToolName } from "./payments";
+import {
+  getPaymentMode,
+  isPaymentProofPresented,
+  isPaymentSettlementVerified,
+  paidToolCatalog,
+  type PaidToolName
+} from "./payments";
 import type { RiskLevel, RiskResponse } from "../shared/types";
 
 export type TelemetryTrack = "free-rest" | "premium-rest" | "mcp" | "premium-mcp";
@@ -16,12 +22,12 @@ interface TelemetryEvent {
   decision?: string;
   blocked: boolean;
   priceUsd: number;
-  paymentProofPresent: boolean;
+  paymentProofPresented: boolean;
+  paymentSettlementVerified: boolean;
   paymentMode: string;
   qualifiedRevenueUsd: number;
-  demoRevenueUsd: number;
   projectedRevenueUsd: number;
-  estimatedValueProtectedUsd: number;
+  blockedActionValueUsd: number;
   source: string;
 }
 
@@ -42,14 +48,14 @@ export function recordToolTelemetry({
   paidTool?: PaidToolName;
 }) {
   const price = paidTool ? paidToolCatalog.find((item) => item.tool === paidTool)?.priceUsd ?? 0 : 0;
-  const paymentProofPresent = hasPaymentProof(request);
-  const paymentMode = process.env.OKX_SENTINEL_PAYMENT_MODE ?? "demo";
+  const paymentProofPresented = isPaymentProofPresented(request);
+  const paymentSettlementVerified = isPaymentSettlementVerified(request);
+  const paymentMode = getPaymentMode();
   const decision = readDecision(result);
   const blocked = decision === "block" || result.findings.some((finding) => finding.severity === "critical");
-  const estimatedValueProtectedUsd = blocked ? readSpendLimitUsd(result) : 0;
-  const qualifiedRevenueUsd = paymentProofPresent && price > 0 ? price : 0;
+  const blockedActionValueUsd = blocked ? readActionValueUsd(result) : 0;
+  const qualifiedRevenueUsd = paymentSettlementVerified && price > 0 ? price : 0;
   const projectedRevenueUsd = price > 0 ? price : 0;
-  const demoRevenueUsd = projectedRevenueUsd;
   const event: TelemetryEvent = {
     id: `${Date.now()}-${events.length + 1}`,
     timestamp: new Date().toISOString(),
@@ -61,12 +67,12 @@ export function recordToolTelemetry({
     decision,
     blocked,
     priceUsd: price,
-    paymentProofPresent,
+    paymentProofPresented,
+    paymentSettlementVerified,
     paymentMode,
     qualifiedRevenueUsd,
-    demoRevenueUsd,
     projectedRevenueUsd,
-    estimatedValueProtectedUsd,
+    blockedActionValueUsd,
     source
   };
 
@@ -84,12 +90,12 @@ export function buildTelemetrySummary() {
       accumulator.totalCalls += 1;
       if (event.track === "mcp" || event.track === "premium-mcp") accumulator.mcpCalls += 1;
       if (event.track === "premium-rest" || event.track === "premium-mcp") accumulator.premiumCalls += 1;
-      if (event.paymentProofPresent) accumulator.paymentProofCalls += 1;
+      if (event.paymentProofPresented) accumulator.paymentProofCalls += 1;
+      if (event.paymentSettlementVerified) accumulator.verifiedPaymentCalls += 1;
       if (event.blocked) accumulator.blockedActions += 1;
       accumulator.qualifiedRevenueUsd += event.qualifiedRevenueUsd;
-      accumulator.demoRevenueUsd += event.demoRevenueUsd;
       accumulator.projectedRevenueUsd += event.projectedRevenueUsd;
-      accumulator.estimatedValueProtectedUsd += event.estimatedValueProtectedUsd;
+      accumulator.blockedActionValueUsd += event.blockedActionValueUsd;
       return accumulator;
     },
     {
@@ -97,11 +103,11 @@ export function buildTelemetrySummary() {
       mcpCalls: 0,
       premiumCalls: 0,
       paymentProofCalls: 0,
+      verifiedPaymentCalls: 0,
       blockedActions: 0,
       qualifiedRevenueUsd: 0,
-      demoRevenueUsd: 0,
       projectedRevenueUsd: 0,
-      estimatedValueProtectedUsd: 0
+      blockedActionValueUsd: 0
     }
   );
 
@@ -113,15 +119,15 @@ export function buildTelemetrySummary() {
   return {
     service: "OKX Sentinel",
     campaignUseCase: "Pre-signing risk firewall for OKX.AI agents",
-    revenueModel: "A2MCP pay-per-call with A2A audit upsell",
+    revenueModel: "Free A2MCP launch with verified x402 pay-per-call planned",
     ...roundMoney(totals),
     byTool,
     latestEvents: events.slice(0, 20),
     caveats: [
-      "qualifiedRevenueUsd only counts premium calls with a payment proof header in this server process.",
+      "paymentProofCalls counts requests that presented a payment header; it does not prove settlement.",
+      "verifiedPaymentCalls and qualifiedRevenueUsd only increase when trusted payment middleware marks settlement as verified.",
       "projectedRevenueUsd is the price projection for metered premium calls and is not claimed as settled revenue.",
-      "demoRevenueUsd is retained as a backward-compatible alias for projectedRevenueUsd.",
-      "estimatedValueProtectedUsd is derived from blocked policy spend limits, not custody or transaction execution."
+      "blockedActionValueUsd sums caller-declared action values for blocked policy checks; it is not custody or execution volume."
     ]
   };
 }
@@ -139,25 +145,17 @@ function readDecision(result: RiskResponse): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function readSpendLimitUsd(result: RiskResponse): number {
-  const policyApplied = result.metadata?.policyApplied;
-  if (!policyApplied || typeof policyApplied !== "object" || Array.isArray(policyApplied)) return 0;
-  const spendLimitUsd = (policyApplied as { spendLimitUsd?: unknown }).spendLimitUsd;
-  return typeof spendLimitUsd === "number" && Number.isFinite(spendLimitUsd) ? spendLimitUsd : 0;
-}
-
-function hasPaymentProof(request: Request): boolean {
-  const authorization = request.header("authorization") ?? "";
-  return Boolean(request.header("x-payment") || request.header("x-okx-payment") || authorization.toLowerCase().startsWith("x402 "));
+function readActionValueUsd(result: RiskResponse): number {
+  const actionValueUsd = result.metadata?.actionValueUsd;
+  return typeof actionValueUsd === "number" && Number.isFinite(actionValueUsd) ? actionValueUsd : 0;
 }
 
 function roundMoney<T extends Record<string, unknown>>(totals: T): T {
   return {
     ...totals,
     qualifiedRevenueUsd: Number((totals.qualifiedRevenueUsd as number).toFixed(2)),
-    demoRevenueUsd: Number((totals.demoRevenueUsd as number).toFixed(2)),
     projectedRevenueUsd: Number((totals.projectedRevenueUsd as number).toFixed(2)),
-    estimatedValueProtectedUsd: Number((totals.estimatedValueProtectedUsd as number).toFixed(2))
+    blockedActionValueUsd: Number((totals.blockedActionValueUsd as number).toFixed(2))
   };
 }
 

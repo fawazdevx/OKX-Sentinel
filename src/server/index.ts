@@ -1,21 +1,48 @@
 import cors from "cors";
 import express, { type Request, type Response } from "express";
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 import { defaultChainId, isSupportedChainId, supportedChains } from "../shared/chains";
 import { exampleInputs } from "../shared/examples";
 import type { ChainId, RiskResponse } from "../shared/types";
-import { buildPricing, maybeRequirePayment, paidToolCatalog, type PaidToolName } from "./payments";
+import {
+  buildPricing,
+  getPaymentMode,
+  isPaymentIntegrationReady,
+  isPaymentProofPresented,
+  isPaymentSettlementVerified,
+  maybeRequirePayment,
+  paidToolCatalog,
+  type PaidToolName
+} from "./payments";
 import { analyzeApproval, generateRevokePlan } from "./scanners/approvalScanner";
 import { evaluateActionPolicy } from "./scanners/policyScanner";
 import { explainTransaction } from "./scanners/transactionScanner";
 import { scanToken } from "./scanners/tokenScanner";
 import { scanWallet } from "./scanners/walletScanner";
 import { buildTelemetrySummary, recordToolTelemetry, type TelemetryTrack } from "./telemetry";
+import { RequestValidationError } from "./scanners/common";
 
 const app = express();
 const port = Number(process.env.PORT ?? 8787);
+const host = process.env.HOST ?? "0.0.0.0";
+const supportedMcpProtocolVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] as const;
 
-app.use(cors());
+app.use((request, response, next) => {
+  const origin = request.header("origin");
+  if (origin && !isAllowedOrigin(origin)) {
+    response.status(403).json({
+      error: {
+        message: "Origin is not allowed.",
+        statusCode: 403
+      }
+    });
+    return;
+  }
+  next();
+});
+app.use(cors({ origin: true }));
 app.use(express.json({ limit: "1mb" }));
 
 const chainIdSchema = z
@@ -55,6 +82,7 @@ const actionPolicySchema = z.object({
   chainId: chainIdSchema.default(defaultChainId),
   wallet: z.string().optional(),
   agentId: z.string().optional(),
+  actionValueUsd: z.number().positive().optional(),
   policy: z
     .object({
       maxAllowedRiskScore: z.number().min(0).max(100).optional(),
@@ -77,11 +105,44 @@ const mcpToolCallSchema = z.object({
   arguments: z.record(z.unknown()).default({})
 });
 
+const initializeParamsSchema = z.object({
+  protocolVersion: z.string().optional()
+});
+
+const riskResponseOutputSchema = {
+  type: "object",
+  required: [
+    "tool",
+    "chainId",
+    "riskScore",
+    "riskLevel",
+    "summary",
+    "findings",
+    "recommendedActions",
+    "confidence",
+    "dataSourcesUsed",
+    "limitations"
+  ],
+  properties: {
+    tool: { type: "string" },
+    chainId: { type: "number" },
+    riskScore: { type: "number", minimum: 0, maximum: 100 },
+    riskLevel: { type: "string", enum: ["Low", "Medium", "High", "Critical"] },
+    summary: { type: "string" },
+    findings: { type: "array" },
+    recommendedActions: { type: "array", items: { type: "string" } },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+    dataSourcesUsed: { type: "array", items: { type: "string" } },
+    limitations: { type: "array", items: { type: "string" } },
+    metadata: { type: "object" }
+  }
+} as const;
+
 app.get("/api/health", (_request, response) => {
   response.json({
     status: "ok",
     service: "OKX Sentinel",
-    version: "0.1.0",
+    version: "1.0.0",
     chains: supportedChains
   });
 });
@@ -160,10 +221,46 @@ app.post("/api/premium/tools/evaluate_action_policy", paidAsyncHandler("evaluate
 
 app.post("/api/mcp", mcpHandler(false));
 app.post("/api/premium/mcp", mcpHandler(true));
+app.get("/api/mcp", (_request, response) => response.status(405).setHeader("Allow", "POST").json({
+  error: {
+    message: "This stateless MCP endpoint accepts POST JSON-RPC requests.",
+    statusCode: 405
+  }
+}));
+app.get("/api/premium/mcp", (_request, response) => response.status(405).setHeader("Allow", "POST").json({
+  error: {
+    message: "This stateless MCP endpoint accepts POST JSON-RPC requests.",
+    statusCode: 405
+  }
+}));
+
+const distDirectory = path.resolve(process.cwd(), "dist");
+const distIndex = path.join(distDirectory, "index.html");
+
+app.use("/api", (_request, response) => {
+  response.status(404).json({
+    error: {
+      message: "API route not found.",
+      statusCode: 404
+    }
+  });
+});
+
+if (existsSync(distIndex)) {
+  app.use(express.static(distDirectory));
+  app.get("*", (_request, response) => {
+    response.sendFile(distIndex);
+  });
+}
 
 app.use((error: unknown, _request: Request, response: Response, _next: unknown) => {
-  const statusCode = error instanceof z.ZodError ? 400 : 500;
-  const message = error instanceof z.ZodError ? error.errors.map((item) => item.message).join("; ") : error instanceof Error ? error.message : "Unexpected server error";
+  const isClientError = error instanceof z.ZodError || error instanceof RequestValidationError;
+  const statusCode = isClientError ? 400 : 500;
+  const message = error instanceof z.ZodError
+    ? error.errors.map((item) => item.message).join("; ")
+    : error instanceof Error
+      ? error.message
+      : "Unexpected server error";
 
   response.status(statusCode).json({
     error: {
@@ -173,8 +270,8 @@ app.use((error: unknown, _request: Request, response: Response, _next: unknown) 
   });
 });
 
-app.listen(port, () => {
-  console.log(`OKX Sentinel API listening on http://localhost:${port}`);
+app.listen(port, host, () => {
+  console.log(`OKX Sentinel API listening on http://${host}:${port}`);
 });
 
 function asyncHandler(handler: (request: Request) => Promise<RiskResponse>, options: { source: string; track?: TelemetryTrack } = { source: "rest" }) {
@@ -215,7 +312,9 @@ function paidAsyncHandler(tool: PaidToolName, handler: (request: Request) => Pro
           track: "A2MCP",
           paymentStandard: "x402",
           tool,
-          mode: process.env.OKX_SENTINEL_PAYMENT_MODE ?? "demo"
+          mode: getPaymentMode(),
+          proofPresented: isPaymentProofPresented(request),
+          settlementVerified: isPaymentSettlementVerified(request)
         }
       });
     } catch (error) {
@@ -231,22 +330,36 @@ function mcpHandler(premium: boolean) {
       const id = parsed.id ?? null;
 
       if (parsed.method === "initialize") {
+        const initializeParams = initializeParamsSchema.parse(parsed.params ?? {});
+        const protocolVersion = supportedMcpProtocolVersions.includes(
+          initializeParams.protocolVersion as (typeof supportedMcpProtocolVersions)[number]
+        )
+          ? initializeParams.protocolVersion
+          : supportedMcpProtocolVersions[0];
         response.json(mcpSuccess(id, {
-          protocolVersion: "2024-11-05",
+          protocolVersion,
           serverInfo: {
             name: "OKX Sentinel",
-            version: "0.1.0"
+            version: "1.0.0"
           },
           capabilities: {
-            tools: {},
+            tools: {
+              listChanged: false
+            },
             resources: {}
-          }
+          },
+          instructions: "Call evaluate_action_policy before an external wallet signing request. Sentinel never signs or broadcasts."
         }));
         return;
       }
 
       if (parsed.method === "ping") {
         response.json(mcpSuccess(id, { status: "ok" }));
+        return;
+      }
+
+      if (parsed.id === undefined && parsed.method.startsWith("notifications/")) {
+        response.status(202).end();
         return;
       }
 
@@ -266,6 +379,10 @@ function mcpHandler(premium: boolean) {
       }
 
       const toolCall = mcpToolCallSchema.parse(parsed.params);
+      if (!isKnownTool(toolCall.name)) {
+        response.json(mcpError(id, -32602, `Unknown OKX Sentinel tool: ${toolCall.name}`));
+        return;
+      }
       const paidTool = paidToolForMcpTool(toolCall.name);
 
       if (premium) {
@@ -279,7 +396,21 @@ function mcpHandler(premium: boolean) {
         }
       }
 
-      const result = await callTool(toolCall.name, toolCall.arguments);
+      let result: RiskResponse;
+      try {
+        result = await callTool(toolCall.name, toolCall.arguments);
+      } catch (error) {
+        response.json(mcpSuccess(id, {
+          isError: true,
+          content: [
+            {
+              type: "text",
+              text: errorMessage(error)
+            }
+          ]
+        }));
+        return;
+      }
       recordToolTelemetry({
         request,
         result,
@@ -293,10 +424,6 @@ function mcpHandler(premium: boolean) {
           {
             type: "text",
             text: result.summary
-          },
-          {
-            type: "json",
-            json: result
           }
         ],
         structuredContent: premium
@@ -306,7 +433,9 @@ function mcpHandler(premium: boolean) {
                 track: "A2MCP",
                 paymentStandard: "x402",
                 tool: paidTool,
-                mode: process.env.OKX_SENTINEL_PAYMENT_MODE ?? "demo"
+                mode: getPaymentMode(),
+                proofPresented: isPaymentProofPresented(request),
+                settlementVerified: isPaymentSettlementVerified(request)
               }
             }
           : result
@@ -372,7 +501,14 @@ function buildMcpTools() {
   return buildToolDefinitions().map((tool) => ({
     name: tool.name,
     description: tool.description,
-    inputSchema: tool.inputSchema
+    inputSchema: tool.inputSchema,
+    outputSchema: riskResponseOutputSchema,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: true
+    }
   }));
 }
 
@@ -383,6 +519,9 @@ function buildToolManifest() {
     tagline: "Pre-transaction risk firewall for wallets, tokens, approvals, and AI agents.",
     positioning: "Agent Service Provider for OKX.AI users and crypto agents that need structured pre-signing risk checks.",
     recommendedTrack: "A2MCP",
+    launchMode: "free",
+    primaryService: "evaluate_action_policy",
+    listingEndpoint: "/api/tools/evaluate_action_policy",
     whyA2MCP:
       "Sentinel risk checks are standardized API calls with deterministic JSON outputs, fixed per-call pricing, and automatic agent usage. A2A remains useful for premium manual audit reports.",
     custody: false,
@@ -391,11 +530,12 @@ function buildToolManifest() {
     signingStrategy:
       "External signing handoff only. Sentinel returns allow/review/block decisions and instructions for OKX Agentic Wallet or the user's wallet; it never stores keys or signs transactions.",
     x402: {
-      requiredForProduction: true,
+      requiredForPremiumOnly: true,
       premiumBasePath: "/api/premium/tools",
-      paymentMode: process.env.OKX_SENTINEL_PAYMENT_MODE ?? "demo",
+      paymentMode: getPaymentMode(),
+      integrationReady: isPaymentIntegrationReady(),
       paymentRecipient: process.env.OKX_SENTINEL_PAYMENT_RECIPIENT ?? "configure OKX_SENTINEL_PAYMENT_RECIPIENT",
-      note: "Connect OKX Payment SDK middleware before marketplace go-live; demo mode keeps premium routes callable for local judging walkthroughs."
+      note: "The free A2MCP service is the launch path. Premium routes remain disabled for settlement claims until trusted x402 middleware verifies payment."
     },
     realOnchainCapabilities: [
       "ERC-20 metadata reads",
@@ -412,6 +552,7 @@ function buildToolManifest() {
     mcp: {
       jsonRpcPath: "/api/mcp",
       premiumJsonRpcPath: "/api/premium/mcp",
+      protocolVersions: supportedMcpProtocolVersions,
       supportedMethods: ["initialize", "ping", "tools/list", "tools/call", "sentinel/metrics"]
     },
     tractionEndpoint: "/api/traction",
@@ -471,7 +612,7 @@ function buildToolDefinitions() {
       premiumPath: "/api/premium/tools/premium_explain_transaction",
       inputSchema: {
         type: "object",
-        required: ["txData", "chainId"],
+          required: ["txData", "chainId"],
         properties: {
           txData: { type: "string", description: "Raw calldata, unsigned transaction JSON, or transaction intent text" },
           chainId: { type: "number", enum: supportedChains.map((chain) => chain.id) }
@@ -524,6 +665,7 @@ function buildToolDefinitions() {
           chainId: { type: "number", enum: supportedChains.map((chain) => chain.id) },
           wallet: { type: "string" },
           agentId: { type: "string" },
+          actionValueUsd: { type: "number", exclusiveMinimum: 0, description: "Caller-declared action value used only for the optional spend-limit policy." },
           policy: {
             type: "object",
             properties: {
@@ -541,13 +683,18 @@ function buildToolDefinitions() {
 
 function buildAspReadiness() {
   const publicBaseUrl = process.env.PUBLIC_BASE_URL;
-  const paymentRecipient = process.env.OKX_SENTINEL_PAYMENT_RECIPIENT;
-  const paymentMode = process.env.OKX_SENTINEL_PAYMENT_MODE ?? "demo";
+  const paymentReady = isPaymentIntegrationReady();
 
   return {
     name: "OKX Sentinel",
     recommendedTrack: "A2MCP",
-    categoryFit: ["Finance Copilot", "Software Utility", "Business Potential", "Revenue Rocket"],
+    categoryFit: ["Best Product", "Finance Copilot", "Software Utility"],
+    launchMode: "free A2MCP",
+    primaryService: {
+      name: "evaluate_action_policy",
+      endpoint: "/api/tools/evaluate_action_policy",
+      description: "Deterministic allow/review/block decision before an external wallet signing request."
+    },
     publicBaseUrl: publicBaseUrl ?? "configure PUBLIC_BASE_URL before OKX.AI listing",
     callableSurfaces: {
       restTools: "/api/tools/*",
@@ -570,12 +717,18 @@ function buildAspReadiness() {
         evidence: "REST tool endpoints plus MCP-style JSON-RPC tools/list and tools/call."
       },
       {
-        item: "x402 payment enforcement",
-        status: paymentMode === "enforce" && paymentRecipient ? "ready" : "needs-production-config",
+        item: "Free A2MCP launch path",
+        status: "ready",
         evidence:
-          paymentMode === "enforce"
-            ? "Premium endpoints reject unpaid requests unless payment proof headers are present."
-            : "Set OKX_SENTINEL_PAYMENT_MODE=enforce and OKX_SENTINEL_PAYMENT_RECIPIENT before marketplace go-live."
+          "The policy gate is callable without payment and returns a structured risk decision directly."
+      },
+      {
+        item: "Verified x402 monetization",
+        status: paymentReady ? "ready" : "needs-production-config",
+        evidence:
+          paymentReady
+            ? "Trusted payment middleware is configured to verify settlement before premium execution."
+            : "Premium pricing is a roadmap until OKX Payment SDK/x402 middleware verifies settlement; client headers alone do not count as revenue."
       },
       {
         item: "No custody or automatic signing",
@@ -585,7 +738,7 @@ function buildAspReadiness() {
       {
         item: "Revenue and usage proof",
         status: "ready",
-        evidence: "The /api/traction endpoint reports calls, paid proof calls, blocked actions, and revenue estimates."
+        evidence: "The /api/traction endpoint reports calls, blocked actions, presented payment headers, verified payment calls, and qualified revenue."
       },
       {
         item: "OKX.AI listing",
@@ -599,4 +752,37 @@ function buildAspReadiness() {
       }
     ]
   };
+}
+
+function isAllowedOrigin(origin: string): boolean {
+  const configuredOrigins = (process.env.CORS_ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const publicOrigin = process.env.PUBLIC_BASE_URL ? safeOrigin(process.env.PUBLIC_BASE_URL) : undefined;
+  const defaults = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "http://localhost:4173",
+    "http://127.0.0.1:4173",
+    "http://localhost:8787",
+    "http://127.0.0.1:8787"
+  ];
+  return new Set([...defaults, ...configuredOrigins, ...(publicOrigin ? [publicOrigin] : [])]).has(origin);
+}
+
+function safeOrigin(value: string): string | undefined {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unexpected tool error.";
+}
+
+function isKnownTool(name: string): boolean {
+  return buildToolDefinitions().some((tool) => tool.name === name);
 }

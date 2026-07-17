@@ -9,9 +9,16 @@ export const standardLimitations = [
   "Use a block explorer and revoke tools for final confirmation before acting."
 ];
 
+export class RequestValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RequestValidationError";
+  }
+}
+
 export function validateChainId(chainId: number): ChainId {
   if (!isSupportedChainId(chainId)) {
-    throw new Error(`Unsupported chainId. Supported chains: 1, 196, 8453, 42161, 137, 56, 10.`);
+    throw new RequestValidationError(`Unsupported chainId. Supported chains: 1, 196, 8453, 42161, 137, 56, 10.`);
   }
 
   return chainId;
@@ -21,7 +28,7 @@ export function validateEvmAddress(address: string, label = "address"): string {
   const trimmed = address.trim();
 
   if (!isAddress(trimmed)) {
-    throw new Error(`Invalid ${label}. Expected a 20-byte EVM address.`);
+    throw new RequestValidationError(`Invalid ${label}. Expected a 20-byte EVM address.`);
   }
 
   return trimmed;

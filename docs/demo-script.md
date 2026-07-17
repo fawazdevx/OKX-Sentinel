@@ -1,39 +1,51 @@
 # 90-Second Demo Script
 
-## 0-15 seconds
+Record the dashboard at desktop width. Keep the cursor deliberate and do not open more than one raw JSON view.
 
-Open the dashboard. The real Permit2 approval example is already loaded in the policy gate.
+## 0-12 seconds
 
-Say: "OKX Sentinel is an A2MCP pre-transaction risk firewall for OKX.AI agents. Before an agent asks for a signature, Sentinel answers: allow, review, or block?"
+Show the dashboard with the unlimited Permit2 approval example already evaluated.
 
-Point to the block decision, critical findings, and recommended actions.
+Say:
 
-## 15-35 seconds
+> "OKX Sentinel is a free A2MCP pre-transaction risk firewall for OKX.AI agents. Before an agent asks your wallet to sign, Sentinel returns allow, review, or block."
 
-Click the scan type selector and choose Transaction.
+## 12-32 seconds
 
-Say: "Here is an unsigned transaction. Sentinel decodes it as an ERC-20 approval, detects max uint256, and warns that this grants unlimited spending permission."
+Point to `Blocked`, the risk score, and `Transaction grants unlimited approval`.
 
-Point to assets at risk, permission changes, and the JSON viewer.
+Say:
 
-## 35-55 seconds
+> "This is real ERC-20 approve calldata. Sentinel decodes max uint256, identifies the spender, and blocks the action before a signing request is created."
 
-Choose Policy Gate.
+## 32-48 seconds
 
-Say: "The paid policy endpoint returns a deterministic decision. This risky unlimited approval is blocked, and Sentinel refuses to create a signing request. The user or OKX Agentic Wallet always signs externally."
+Point to the findings, recommended actions, and external signing panel. Open the structured response.
 
-Point to the decision, signing handoff, and JSON.
+Say:
 
-## 55-75 seconds
+> "The response is deterministic JSON with evidence, confidence, sources, limitations, and a non-custodial signing handoff. Sentinel never receives keys and never broadcasts."
 
-Point to Campaign Proof and OKX.AI Review.
+## 48-62 seconds
 
-Say: "This is the Revenue Rocket proof. The live service records tool calls, MCP calls, paid proof calls, blocked actions, qualified revenue, projected revenue, and estimated value protected. It does not claim projected revenue as settled revenue."
+Click `Low-risk intent`.
 
-Open `/api/traction` if needed.
+Say:
 
-## 75-90 seconds
+> "Policies are configurable. This ten-dollar X Layer transfer stays below the risk and spend limits, so it is allowed by policy but still requires the user's wallet confirmation."
 
-Open `/api/mcp/manifest`, `/api/pricing`, and `/api/asp/readiness`.
+## 62-77 seconds
 
-Say: "This is built for A2MCP: agents can call REST or MCP JSON-RPC, premium calls are x402-gated, readiness tells us exactly what is done and what remains for listing approval, and custom audit reports are the A2A upsell."
+Open `System status`, then briefly show the structured response label.
+
+Say:
+
+> "The same service is callable through direct REST tools or MCP 2025-11-25. The launch endpoint is free, which removes payment friction for users and makes marketplace review straightforward."
+
+## 77-90 seconds
+
+Return to the blocked example and point to session activity.
+
+Say:
+
+> "Sentinel solves the trust gap between autonomous agents and wallet signatures. It launches as a Finance Copilot and Software Utility, then adds verified x402 deep scans after real payment middleware is connected."

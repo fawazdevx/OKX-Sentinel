@@ -1,91 +1,59 @@
-# Production Readiness for OKX.AI
+# Production Readiness
 
-## What Is Real Onchain Now
+## Ready Now
 
-OKX Sentinel is read-only and can perform live EVM checks when RPC access is configured.
+- Combined production server for dashboard and API.
+- Free REST policy-gate endpoint.
+- Stateless MCP JSON-RPC endpoint with protocol negotiation through `2025-11-25`.
+- Deterministic allow/review/block decisions.
+- Unlimited approval and common calldata detection.
+- Configurable risk, review, approval, and spend-limit policies.
+- Caller-declared blocked action value telemetry.
+- Read-only wallet, token, and allowance RPC calls when configured.
+- Explicit confidence, sources, and limitations.
+- No keys, custody, signing, broadcast, or automatic revoke execution.
+- Docker deployment path.
+- Automated build, type checking, and tests.
 
-Short answer: yes, the app can do real onchain work. It performs real read-only EVM calls and turns those reads into structured risk decisions for agents. It intentionally does not perform write transactions, because a pre-transaction firewall should not custody funds or sign on the user's behalf.
+## Configure Before Public Listing
 
-Current real checks:
+- HTTPS deployment.
+- `PUBLIC_BASE_URL`.
+- `CORS_ALLOWED_ORIGINS`.
+- Dedicated RPC URL for every network shown in the demo.
+- Persistent telemetry path or database if session metrics must survive restarts.
+- OKX.AI ASP registration and approved live listing.
 
-- Native balance read for wallet scans.
-- Wallet account code check to classify EOA vs contract account.
-- ERC-20 `name`, `symbol`, `decimals`, and `totalSupply` reads.
-- ERC-20 `allowance(owner, spender)` reads for approval analysis.
-- Contract bytecode read for token scans.
-- Bytecode selector heuristics for mint, pause, blacklist, tax, owner, admin, and proxy indicators.
-- EIP-1967 proxy implementation/admin storage slot reads.
-- `owner()`, `getOwner()`, and `admin()` probes.
-- Transaction calldata selector decoding for approval, transfer, swap, bridge, mint, claim, and unknown actions.
+## Not Yet Production-Complete
 
-Current agent and monetization surfaces:
+- Verified OKX Payment SDK/x402 middleware.
+- API authentication, tenant quotas, and rate limits.
+- Persistent metering database.
+- Wallet approval/history indexer.
+- Explorer verification API.
+- Transaction simulation.
+- DEX liquidity and holder enrichment.
+- External threat-intelligence feed.
 
-- REST tool endpoints under `/api/tools/*`.
-- Premium REST endpoints under `/api/premium/tools/*`.
-- MCP-style JSON-RPC at `/api/mcp`.
-- Premium MCP-style JSON-RPC at `/api/premium/mcp`.
-- x402-style payment proof enforcement in `OKX_SENTINEL_PAYMENT_MODE=enforce`.
-- Tool manifest at `/api/mcp/manifest`.
-- Pricing metadata at `/api/pricing`.
-- Usage, paid-call, revenue, blocked-action, and estimated value protected telemetry at `/api/traction`.
-- OKX.AI readiness checklist at `/api/asp/readiness`.
+These capabilities must not be implied in listing or demo copy until connected.
 
-The app remains intentionally non-custodial:
+## Payment Safety
 
-- No private keys.
-- No seed phrases.
-- No automatic signing.
-- No automatic revoke execution.
-- No custody.
+`OKX_SENTINEL_PAYMENT_MODE=enforce` requires:
 
-This is the recommended product position for OKX.AI review. Full custody/signing would add avoidable key-management and user-loss risk. Sentinel should be the paid pre-signing risk firewall, then hand off approved actions to OKX Agentic Wallet or the user's wallet.
+- `OKX_SENTINEL_PAYMENT_RECIPIENT`
+- `OKX_SENTINEL_PAYMENT_VERIFICATION=trusted-proxy`
+- Middleware that strips inbound `X-OKX-Payment-Verified`
+- Middleware that sets `X-OKX-Payment-Verified: true` only after settlement verification
 
-## How To Enable Real Reads
+A client-supplied `X-Payment` or authorization header is recorded as presented proof but never counted as qualified revenue.
 
-For reliable judging and production usage, set dedicated RPC URLs:
+## Recommended Marketplace Position
 
-```bash
-XLAYER_RPC_URL=
-ETHEREUM_RPC_URL=
-BASE_RPC_URL=
-ARBITRUM_RPC_URL=
-POLYGON_RPC_URL=
-BNB_RPC_URL=
-OPTIMISM_RPC_URL=
-```
+Launch as a free A2MCP Finance Copilot and Software Utility.
 
-For local experimentation only, public RPC reads can be enabled:
+The product claim is:
 
-```bash
-ENABLE_PUBLIC_RPC_READS=true
-```
+> OKX Sentinel gives agents a deterministic, read-only risk gate before they ask a wallet to sign.
 
-Public RPCs can be slow or rate-limited, so production deployments should use dedicated RPC providers.
-
-## What Still Needs Integration Before Marketplace Go-Live
-
-- OKX Payment SDK / x402 pay-per-call middleware for Agent-to-MCP monetization.
-- Hosted HTTPS deployment URL.
-- Persistent production usage metering database.
-- API authentication and rate limits.
-- Explorer/indexer enrichment for full wallet approval inventory and transaction history.
-- Threat-intel feed or curated reputation dataset beyond the local registry.
-- Optional OKLink/DEX enrichment for holder concentration, liquidity depth, pool age, and exchange listings.
-
-## Why This Still Works As A Hackathon ASP
-
-The strongest submission story is not "perfect scam detection." It is:
-
-> OKX Sentinel gives OKX.AI agents a read-only pre-action risk firewall. Before an agent signs, suggests, swaps, bridges, claims, or approves, it calls Sentinel and gets a structured risk report with confidence, limitations, and safe next steps.
-
-This directly matches Agent-to-MCP usage because the service takes parameters and returns a deterministic result that other agents can consume. The primary paid call is `evaluate_action_policy`, which returns `allow`, `review`, or `block`.
-
-## Suggested Live Demo Flow
-
-1. Show a real token scan on a known token address with RPC enabled.
-2. Show the live-read badges in the dashboard.
-3. Switch to the risky demo transaction and show the unlimited approval warning.
-4. Call the premium MCP policy gate with `X-Payment: demo-proof`.
-5. Open `/api/traction` and point to the incremented premium call, payment-proof call, blocked action, revenue, and estimated value protected.
-6. Open `/api/mcp/manifest`, `/api/pricing`, and `/api/asp/readiness`.
-7. Explain that the paid tier adds indexer, threat-intel, and liquidity enrichment.
+The product does not claim perfect scam detection, custody protection, or complete wallet intelligence.

@@ -2,7 +2,7 @@ import { isAddress } from "viem";
 import { getEntityLabel, isKnownSafe, isKnownSuspicious } from "../../shared/knownEntities";
 import { confidenceFromSources, findingToScore, riskLevelFromScore, strongestFinding, summarizeRisk } from "../../shared/scoring";
 import type { RiskFinding, TransactionExplainInput, TransactionExplainResponse } from "../../shared/types";
-import { buildDataSources, riskFinding, standardLimitations, validateChainId } from "./common";
+import { buildDataSources, RequestValidationError, riskFinding, standardLimitations, validateChainId } from "./common";
 import { decodeCalldata } from "./calldata";
 
 interface ParsedTxInput {
@@ -165,7 +165,7 @@ function parseTxInput(raw: string): ParsedTxInput {
   const trimmed = raw.trim();
 
   if (!trimmed) {
-    throw new Error("txData is required.");
+    throw new RequestValidationError("txData is required.");
   }
 
   try {

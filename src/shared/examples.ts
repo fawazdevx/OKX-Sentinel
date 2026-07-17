@@ -37,6 +37,7 @@ export const exampleInputs = {
     wallet: exampleWallet,
     agentId: "okx-agent-risk-gate",
     chainId: 1 as ChainId,
+    actionValueUsd: 500,
     policy: {
       maxAllowedRiskScore: 64,
       requireReviewAbove: 35,

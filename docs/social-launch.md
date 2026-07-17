@@ -1,30 +1,39 @@
 # Social Launch Pack
 
-Use this for the X launch post and demo caption.
+## X Post
 
-## Short Post
+OKX Sentinel is a free A2MCP pre-transaction risk firewall for OKX.AI agents.
 
-OKX Sentinel is an A2MCP pre-signing risk firewall for OKX.AI agents.
+Before an agent asks your wallet to sign, Sentinel:
 
-Before an agent asks a wallet to sign, Sentinel returns `allow`, `review`, or `block`.
+- decodes the action
+- detects unlimited approvals and risky controls
+- returns `allow`, `review`, or `block`
+- keeps keys and signing outside the service
 
-Demo: risky unlimited approval -> blocked -> x402-gated paid MCP call -> live traction meter.
+Built for X Layer and six other EVM networks.
 
-#okxai
+Demo below. #OKXAI
+
+## Short Version
+
+I built OKX Sentinel for #OKXAI: a free A2MCP risk firewall agents call before wallet signing.
+
+Unlimited approval -> decoded -> blocked.
+
+Low-risk X Layer action -> policy checked -> external wallet confirmation.
+
+No keys. No custody. REST + MCP.
 
 ## Demo Caption
 
-In 90 seconds:
+In under 90 seconds:
 
-- Scan a risky wallet.
-- Decode a malicious unlimited approval.
-- Block the agent action before signing.
-- Show the external signing boundary.
-- Call the paid MCP endpoint with payment proof.
-- Show `/api/traction` updating paid calls, blocked actions, revenue proof, and estimated value protected.
+- Block real max-uint256 approval calldata.
+- Show evidence and external signing boundaries.
+- Allow a low-risk X Layer intent under policy limits.
+- Show the structured REST/MCP response.
 
 ## Positioning Line
 
-Not a wallet. Not custody. Not another token scanner.
-
-OKX Sentinel is the paid safety layer agents call before they ask users to sign.
+OKX Sentinel is the safety layer between autonomous agent intent and a user's wallet signature.

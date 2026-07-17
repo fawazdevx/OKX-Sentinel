@@ -9,7 +9,7 @@ describe("telemetry", () => {
     resetTelemetryForTests();
   });
 
-  it("separates qualified paid revenue from projected revenue and blocked value", async () => {
+  it("does not treat a client-supplied payment header as qualified revenue", async () => {
     const blockedResult = await evaluateActionPolicy(exampleInputs.policy);
 
     recordToolTelemetry({
@@ -26,12 +26,42 @@ describe("telemetry", () => {
     expect(summary.mcpCalls).toBe(1);
     expect(summary.premiumCalls).toBe(1);
     expect(summary.paymentProofCalls).toBe(1);
+    expect(summary.verifiedPaymentCalls).toBe(0);
     expect(summary.blockedActions).toBe(1);
-    expect(summary.qualifiedRevenueUsd).toBe(0.05);
+    expect(summary.qualifiedRevenueUsd).toBe(0);
     expect(summary.projectedRevenueUsd).toBe(0.05);
-    expect(summary.demoRevenueUsd).toBe(0.05);
-    expect(summary.estimatedValueProtectedUsd).toBe(500);
+    expect(summary.blockedActionValueUsd).toBe(500);
     expect(summary.byTool.evaluate_action_policy).toBe(1);
+  });
+
+  it("counts revenue only when trusted middleware marks settlement verified", async () => {
+    const previousVerificationMode = process.env.OKX_SENTINEL_PAYMENT_VERIFICATION;
+    process.env.OKX_SENTINEL_PAYMENT_VERIFICATION = "trusted-proxy";
+
+    try {
+      const result = await evaluateActionPolicy(exampleInputs.policy);
+      recordToolTelemetry({
+        request: fakeRequest({
+          "x-payment": "opaque-proof",
+          "x-okx-payment-verified": "true"
+        }),
+        result,
+        track: "premium-mcp",
+        source: "test",
+        paidTool: "evaluate_action_policy"
+      });
+
+      const summary = buildTelemetrySummary();
+      expect(summary.paymentProofCalls).toBe(1);
+      expect(summary.verifiedPaymentCalls).toBe(1);
+      expect(summary.qualifiedRevenueUsd).toBe(0.05);
+    } finally {
+      if (previousVerificationMode === undefined) {
+        delete process.env.OKX_SENTINEL_PAYMENT_VERIFICATION;
+      } else {
+        process.env.OKX_SENTINEL_PAYMENT_VERIFICATION = previousVerificationMode;
+      }
+    }
   });
 
   it("does not claim qualified revenue for unpaid demo premium calls", async () => {
@@ -60,8 +90,8 @@ describe("telemetry", () => {
 
     expect(summary.qualifiedRevenueUsd).toBe(0);
     expect(summary.projectedRevenueUsd).toBe(0.25);
-    expect(summary.demoRevenueUsd).toBe(0.25);
     expect(summary.blockedActions).toBe(0);
+    expect(summary.blockedActionValueUsd).toBe(0);
   });
 });
 

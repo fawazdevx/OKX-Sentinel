@@ -1,4 +1,4 @@
-# OKX.AI Listing Description
+# OKX.AI Listing Copy
 
 ## Name
 
@@ -6,60 +6,75 @@ OKX Sentinel
 
 ## Tagline
 
-Pre-transaction risk firewall for wallets, tokens, approvals, and AI agents.
+Pre-transaction risk firewall for wallets and AI agents.
 
 ## Short Description
 
-OKX Sentinel helps OKX.AI users and crypto agents answer one question before taking onchain action: is this wallet, token, contract, approval, or transaction safe?
+OKX Sentinel checks an unsigned onchain action before wallet signing and returns `allow`, `review`, or `block` with risk evidence, confidence, limitations, and safe next steps.
 
 ## Long Description
 
-OKX Sentinel is an A2MCP Agent Service Provider security utility for pre-signing risk checks. It exposes structured REST and MCP-style JSON-RPC tools for wallet scanning, token scanning, transaction explanation, approval analysis, revoke-plan generation, and policy gating.
+OKX Sentinel is a free Agent-to-MCP security utility for pre-signing risk checks.
 
-The service returns an agent-friendly JSON report with risk score, risk level, summary, findings, recommended actions, confidence, data sources used, and limitations. It is designed for crypto agents, finance copilots, wallets, trading bots, portfolio dashboards, and users who need fast risk triage before approvals, swaps, bridges, mints, claims, or transfers.
+The primary `evaluate_action_policy` service accepts raw calldata, unsigned transaction JSON, or a plain-English action intent. It detects patterns such as unlimited token approvals, unknown selectors, suspicious destinations, risky token controls, and policy-limit violations. It returns a deterministic risk score, findings, recommended actions, and an external signing handoff.
 
-Sentinel does not custody funds, does not request private keys, does not sign transactions, and does not execute revokes. It provides transparent risk intelligence and safe next-step recommendations.
+Sentinel also exposes focused wallet, token, transaction, and approval tools. Live chain fields use read-only EVM RPC calls when configured. Missing indexer or data-provider coverage is reported as unavailable rather than replaced with generated data.
 
-Recommended listing type: Agent-to-MCP.
+Sentinel never requests private keys, never signs, never broadcasts, and never executes revokes. Final confirmation and signing remain in OKX Agentic Wallet or the user's wallet.
 
-Reason: risk checks are standardized API calls with deterministic JSON and fixed per-call pricing. Premium REST and MCP endpoints are x402-ready for OKX Payment SDK integration.
+## Listing Type
 
-## Tool Endpoints
+Agent-to-MCP
 
-- `scan_wallet(address, chainId)`
-- `scan_token(tokenAddress, chainId)`
-- `explain_transaction(txData, chainId)`
-- `analyze_approval(wallet, tokenAddress, spender, chainId)`
-- `generate_revoke_plan(wallet, chainId)`
-- `evaluate_action_policy(txData, chainId, wallet?, agentId?, policy?)`
+## Launch Pricing
 
-## Integration URLs
+Free
 
-- REST tools: `/api/tools/*`
-- Premium REST tools: `/api/premium/tools/*`
-- MCP JSON-RPC: `/api/mcp`
-- Premium MCP JSON-RPC: `/api/premium/mcp`
-- Manifest: `/api/mcp/manifest`
-- Pricing: `/api/pricing`
-- Traction metrics: `/api/traction`
-- Review readiness: `/api/asp/readiness`
+## Primary Service
+
+- Name: `evaluate_action_policy`
+- Method: `POST`
+- Path: `/api/tools/evaluate_action_policy`
+
+## Inputs
+
+- `txData`: raw calldata, unsigned transaction JSON, or intent text
+- `chainId`: supported EVM chain ID
+- `wallet`: optional wallet or smart-account address
+- `agentId`: optional calling-agent identifier
+- `actionValueUsd`: optional caller-declared action value
+- `policy`: risk, review, approval, and spend thresholds
+
+## Output
+
+- `riskScore`
+- `riskLevel`
+- `summary`
+- `findings`
+- `recommendedActions`
+- `confidence`
+- `dataSourcesUsed`
+- `limitations`
+- `metadata.decision`
+- `metadata.signingHandoff`
+
+## Supported Networks
+
+OKX X Layer, Ethereum, Base, Arbitrum, Polygon, BNB Chain, and Optimism.
 
 ## Target Users
 
-- OKX.AI users checking transactions before signing.
-- AI crypto agents that need pre-action risk checks.
-- Wallets and portfolio apps adding security copilot features.
-- DeFi users reviewing approvals and token risk.
-- Teams that need premium token or wallet research reports.
+- OKX.AI agents that need a pre-signing control.
+- DeFi users reviewing approvals, swaps, bridges, claims, and transfers.
+- Wallet and finance-copilot teams adding an external risk gate.
+- Trading and automation agents with configurable action policies.
 
-## Prize Fit
+## Award Fit
 
-- Best Product: usable dashboard plus agent API.
-- Finance Copilot: pre-action risk guidance for DeFi and trading flows.
-- Software Utility: clean API endpoints and tool manifest.
-- Revenue Rocket: usage-based scans and paid agent API calls.
-- Business Potential: security layer for agentic crypto workflows.
+- Best Product
+- Finance Copilot
+- Software Utility
 
 ## Safety Boundary
 
-Sentinel never stores keys, never signs, never broadcasts transactions, and never executes revokes. It returns risk intelligence and external signing handoff instructions for OKX Agentic Wallet or the user's wallet.
+Read-only risk intelligence only. No custody, private keys, automatic signing, transaction broadcast, or automatic revoke execution.

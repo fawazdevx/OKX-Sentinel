@@ -16,8 +16,6 @@ export interface ToolPrice {
   description: string;
 }
 
-const paymentMode = process.env.OKX_SENTINEL_PAYMENT_MODE ?? "demo";
-
 export const paidToolCatalog: ToolPrice[] = [
   {
     tool: "deep_scan_wallet",
@@ -64,15 +62,21 @@ export const paidToolCatalog: ToolPrice[] = [
 ];
 
 export function buildPricing() {
+  const paymentMode = getPaymentMode();
+  const paymentReady = isPaymentIntegrationReady();
+
   return {
     currency: "USD",
     primaryTrack: "A2MCP",
+    launchMode: "free",
+    freeServiceEndpoint: "/api/tools/evaluate_action_policy",
     paymentStandard: "x402",
     paymentMode,
+    paymentIntegrationReady: paymentReady,
     paymentReadiness:
-      paymentMode === "enforce"
-        ? "Premium endpoints require an x402-style payment proof header before execution."
-        : "Premium endpoints expose x402-compatible payment metadata. Set OKX_SENTINEL_PAYMENT_MODE=enforce after OKX Payment SDK middleware is connected.",
+      paymentReady
+        ? "Premium endpoints require settlement verified by the configured trusted OKX Payment SDK/x402 middleware."
+        : "Launch with the free A2MCP endpoint. Premium prices are a roadmap until OKX Payment SDK/x402 middleware verifies settlement.",
     settlementTarget: {
       network: "X Layer",
       recipient: process.env.OKX_SENTINEL_PAYMENT_RECIPIENT ?? "configure OKX_SENTINEL_PAYMENT_RECIPIENT",
@@ -110,15 +114,17 @@ export function buildPricing() {
 
 export function maybeRequirePayment(request: Request, response: Response, tool: PaidToolName): boolean {
   const price = paidToolCatalog.find((item) => item.tool === tool);
+  const paymentMode = getPaymentMode();
 
   if (!price) {
     response.status(500).json({ error: { message: `Payment catalog missing for ${tool}`, statusCode: 500 } });
     return false;
   }
 
-  if (paymentMode !== "enforce" || hasPaymentProof(request)) {
+  if (paymentMode !== "enforce" || isPaymentSettlementVerified(request)) {
     response.setHeader("X-OKX-Sentinel-Payment-Mode", paymentMode);
     response.setHeader("X-OKX-Sentinel-Tool-Price-USD", price.priceUsd.toString());
+    response.setHeader("X-OKX-Sentinel-Settlement-Verified", String(isPaymentSettlementVerified(request)));
     return true;
   }
 
@@ -138,15 +144,36 @@ export function maybeRequirePayment(request: Request, response: Response, tool: 
       priceUsd: price.priceUsd,
       settlementNetwork: "X Layer",
       recipient: process.env.OKX_SENTINEL_PAYMENT_RECIPIENT ?? "configure OKX_SENTINEL_PAYMENT_RECIPIENT",
-      acceptedProofHeaders: ["X-Payment", "X-OKX-Payment", "Authorization: X402 <proof>"],
-      note: "Wire this requirement to OKX Payment SDK middleware before production marketplace listing."
+      proofPresented: isPaymentProofPresented(request),
+      settlementVerified: false,
+      verificationRequired: "OKX Payment SDK or trusted x402 middleware",
+      note: "A client-supplied payment header is not settlement proof. The payment middleware must verify payment and mark the request as verified."
     }
   });
 
   return false;
 }
 
-function hasPaymentProof(request: Request): boolean {
+export function getPaymentMode(): "demo" | "enforce" {
+  return process.env.OKX_SENTINEL_PAYMENT_MODE === "enforce" ? "enforce" : "demo";
+}
+
+export function isPaymentProofPresented(request: Request): boolean {
   const authorization = request.header("authorization") ?? "";
   return Boolean(request.header("x-payment") || request.header("x-okx-payment") || authorization.toLowerCase().startsWith("x402 "));
+}
+
+export function isPaymentSettlementVerified(request: Request): boolean {
+  return (
+    process.env.OKX_SENTINEL_PAYMENT_VERIFICATION === "trusted-proxy" &&
+    request.header("x-okx-payment-verified")?.toLowerCase() === "true"
+  );
+}
+
+export function isPaymentIntegrationReady(): boolean {
+  return Boolean(
+    getPaymentMode() === "enforce" &&
+      process.env.OKX_SENTINEL_PAYMENT_RECIPIENT &&
+      process.env.OKX_SENTINEL_PAYMENT_VERIFICATION === "trusted-proxy"
+  );
 }

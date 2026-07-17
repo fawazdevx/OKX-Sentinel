@@ -1,7 +1,7 @@
 import { getAddress, isAddress } from "viem";
 import { confidenceFromSources, findingToScore, riskLevelFromScore, strongestFinding, summarizeRisk } from "../../shared/scoring";
 import type { ActionPolicyInput, ActionPolicyResponse, ChainId, PolicyDecision, RiskFinding } from "../../shared/types";
-import { buildDataSources, riskFinding, standardLimitations, validateChainId } from "./common";
+import { buildDataSources, RequestValidationError, riskFinding, standardLimitations, validateChainId } from "./common";
 import { explainTransaction } from "./transactionScanner";
 
 const defaultPolicy = {
@@ -16,6 +16,15 @@ export async function evaluateActionPolicy(input: ActionPolicyInput): Promise<Ac
     ...defaultPolicy,
     ...input.policy
   };
+
+  if (input.wallet && !isAddress(input.wallet)) {
+    throw new RequestValidationError("Invalid wallet. Expected a 20-byte EVM address.");
+  }
+
+  if (policy.requireReviewAbove > policy.maxAllowedRiskScore) {
+    throw new RequestValidationError("requireReviewAbove must be less than or equal to maxAllowedRiskScore.");
+  }
+
   const transactionRisk = await explainTransaction({
     txData: input.txData,
     chainId
@@ -37,6 +46,17 @@ export async function evaluateActionPolicy(input: ActionPolicyInput): Promise<Ac
   if (transactionRisk.riskScore > policy.maxAllowedRiskScore) {
     decision = "block";
     decisionReasons.push(`Risk score ${transactionRisk.riskScore} exceeds max allowed score ${policy.maxAllowedRiskScore}.`);
+  }
+
+  if (
+    input.actionValueUsd !== undefined &&
+    policy.spendLimitUsd !== undefined &&
+    input.actionValueUsd > policy.spendLimitUsd
+  ) {
+    decision = "block";
+    decisionReasons.push(
+      `Declared action value $${input.actionValueUsd.toFixed(2)} exceeds spend limit $${policy.spendLimitUsd.toFixed(2)}.`
+    );
   }
 
   if (decision !== "block" && transactionRisk.riskScore >= policy.requireReviewAbove) {
@@ -98,7 +118,7 @@ export async function evaluateActionPolicy(input: ActionPolicyInput): Promise<Ac
           ? "Pause automation and ask the user to approve or reject the action."
           : "Send the action to external wallet signing only after final user confirmation.",
       "Never pass private keys, seed phrases, or signing authority to OKX Sentinel.",
-      "Use the paid A2MCP endpoint for production agent calls and revenue tracking."
+      "Use the free A2MCP endpoint for automated pre-signing checks."
     ],
     confidence: Math.min(0.94, Number((transactionRisk.confidence + 0.04).toFixed(2))),
     dataSourcesUsed: sources,
@@ -114,6 +134,7 @@ export async function evaluateActionPolicy(input: ActionPolicyInput): Promise<Ac
       automaticSigning: false,
       agentId: input.agentId,
       wallet: normalizedWallet,
+      actionValueUsd: input.actionValueUsd,
       policyApplied: policy,
       signingHandoff: {
         status: decision === "block" ? "not-recommended" : "ready",

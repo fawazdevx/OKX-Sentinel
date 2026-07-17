@@ -180,15 +180,11 @@
     "custody": "none",
     "automaticSigning": false,
     "agentId": "okx-agent-risk-gate",
+    "actionValueUsd": 500,
     "signingHandoff": {
       "status": "not-recommended",
       "reason": "Policy blocks unlimited approvals. Risk score 100 exceeds max allowed score 64."
     }
-  },
-  "billing": {
-    "track": "A2MCP",
-    "paymentStandard": "x402",
-    "tool": "evaluate_action_policy"
   }
 }
 ```

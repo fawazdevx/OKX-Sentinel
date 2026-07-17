@@ -124,6 +124,7 @@ export interface ActionPolicyInput {
   chainId: ChainId;
   wallet?: string;
   agentId?: string;
+  actionValueUsd?: number;
   policy?: {
     maxAllowedRiskScore?: number;
     requireReviewAbove?: number;
@@ -141,6 +142,7 @@ export interface ActionPolicyResponse extends RiskResponse {
     automaticSigning: false;
     agentId?: string;
     wallet?: string;
+    actionValueUsd?: number;
     policyApplied: {
       maxAllowedRiskScore: number;
       requireReviewAbove: number;
