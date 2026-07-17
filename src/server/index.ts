@@ -270,9 +270,16 @@ app.use((error: unknown, _request: Request, response: Response, _next: unknown) 
   });
 });
 
-app.listen(port, host, () => {
-  console.log(`OKX Sentinel API listening on http://${host}:${port}`);
-});
+// On Vercel the app runs as a serverless function (see api/index.ts), so we
+// export the Express instance instead of binding a port. Locally and in any
+// long-running host we listen normally.
+if (!process.env.VERCEL) {
+  app.listen(port, host, () => {
+    console.log(`OKX Sentinel API listening on http://${host}:${port}`);
+  });
+}
+
+export default app;
 
 function asyncHandler(handler: (request: Request) => Promise<RiskResponse>, options: { source: string; track?: TelemetryTrack } = { source: "rest" }) {
   return async (request: Request, response: Response, next: (error: unknown) => void) => {

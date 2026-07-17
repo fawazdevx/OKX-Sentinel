@@ -1,9 +1,10 @@
 node_modules
 dist
-docs/demo-script.md
-docs/submission-checklist.md
-docs/social-launch.md
 docs/final-submission.md
+docs/social-launch.md
+docs/submission-checklist.md
+docs/demo-script.md
+.claude
 .env
 .DS_Store
 coverage
