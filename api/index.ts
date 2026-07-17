@@ -1,20 +1,23 @@
 // Vercel serverless entry point.
 //
-// The Express app is imported lazily inside the handler so that ANY error —
-// including a module-load / import-time crash in the app or its dependencies —
-// is caught and surfaced in the HTTP response instead of producing an opaque
-// FUNCTION_INVOCATION_FAILED (500) with no diagnostics. Once the deploy is
-// confirmed healthy this can be simplified back to a direct `export default app`.
+// It imports the pre-bundled Express app from api/app.mjs (produced by
+// scripts/build-api.mjs during `npm run build`). Bundling means the deployed
+// function is fully self-contained and does not rely on Vercel tracing the
+// src/ TypeScript tree — which previously failed with ERR_MODULE_NOT_FOUND.
+//
+// The app is imported lazily inside the handler so any load-time error is
+// surfaced in the HTTP response instead of an opaque FUNCTION_INVOCATION_FAILED.
 import type { IncomingMessage, ServerResponse } from "node:http";
 
-type ExpressApp = (req: IncomingMessage, res: ServerResponse) => void;
+type NodeHandler = (req: IncomingMessage, res: ServerResponse) => void;
 
-let cachedApp: ExpressApp | undefined;
+let cachedApp: NodeHandler | undefined;
 
-async function loadApp(): Promise<ExpressApp> {
+async function loadApp(): Promise<NodeHandler> {
   if (cachedApp) return cachedApp;
-  const mod = await import("../src/server/index");
-  cachedApp = (mod.default ?? mod) as ExpressApp;
+  // @ts-expect-error - app.mjs is generated at build time and has no type decls.
+  const mod = await import("./app.mjs");
+  cachedApp = (mod.default ?? mod) as NodeHandler;
   return cachedApp;
 }
 
