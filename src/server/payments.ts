@@ -207,7 +207,9 @@ async function resolveSettlement(request: Request, price: ToolPrice): Promise<Ca
 }
 
 function buildX402Requirements(request: Request, price: ToolPrice): X402Requirements {
-  const network = process.env.OKX_SENTINEL_PAYMENT_NETWORK ?? "x-layer";
+  // OKX x402 uses CAIP-2 network ids: eip155:196 = X Layer mainnet,
+  // eip155:1952 = X Layer testnet.
+  const network = process.env.OKX_SENTINEL_PAYMENT_NETWORK ?? "eip155:196";
   const scheme = process.env.OKX_SENTINEL_X402_SCHEME ?? "exact";
   // x402 amounts are in the asset's smallest unit; default USDC has 6 decimals.
   const decimals = Number(process.env.OKX_SENTINEL_PAYMENT_ASSET_DECIMALS ?? 6);
