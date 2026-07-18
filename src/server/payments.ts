@@ -1,4 +1,17 @@
 import type { Request, Response } from "express";
+import { isFacilitatorConfigured, verifyAndSettle, type X402Requirements } from "./x402";
+
+// Per-request cache: when the x402 facilitator confirms settlement we stash the
+// result on the request object so the synchronous telemetry/billing readers
+// (isPaymentSettlementVerified) report the real, facilitator-verified state.
+const SETTLEMENT_KEY = "__okxSentinelSettlement";
+
+interface CachedSettlement {
+  verified: boolean;
+  transaction?: string;
+}
+
+export type PaymentVerificationMode = "none" | "trusted-proxy" | "x402-facilitator";
 
 export type PaidToolName =
   | "deep_scan_wallet"
@@ -112,7 +125,7 @@ export function buildPricing() {
   };
 }
 
-export function maybeRequirePayment(request: Request, response: Response, tool: PaidToolName): boolean {
+export async function maybeRequirePayment(request: Request, response: Response, tool: PaidToolName): Promise<boolean> {
   const price = paidToolCatalog.find((item) => item.tool === tool);
   const paymentMode = getPaymentMode();
 
@@ -121,10 +134,25 @@ export function maybeRequirePayment(request: Request, response: Response, tool: 
     return false;
   }
 
-  if (paymentMode !== "enforce" || isPaymentSettlementVerified(request)) {
+  // Not enforcing (demo/free launch) → allow through without a payment check.
+  if (paymentMode !== "enforce") {
     response.setHeader("X-OKX-Sentinel-Payment-Mode", paymentMode);
     response.setHeader("X-OKX-Sentinel-Tool-Price-USD", price.priceUsd.toString());
     response.setHeader("X-OKX-Sentinel-Settlement-Verified", String(isPaymentSettlementVerified(request)));
+    return true;
+  }
+
+  // Enforcing: settlement must be verified. Resolve it once (this may perform
+  // an async facilitator verify+settle) and cache the outcome on the request.
+  const settlement = await resolveSettlement(request, price);
+
+  if (settlement.verified) {
+    response.setHeader("X-OKX-Sentinel-Payment-Mode", paymentMode);
+    response.setHeader("X-OKX-Sentinel-Tool-Price-USD", price.priceUsd.toString());
+    response.setHeader("X-OKX-Sentinel-Settlement-Verified", "true");
+    if (settlement.transaction) {
+      response.setHeader("X-OKX-Sentinel-Settlement-Tx", settlement.transaction);
+    }
     return true;
   }
 
@@ -154,6 +182,64 @@ export function maybeRequirePayment(request: Request, response: Response, tool: 
   return false;
 }
 
+// Resolve whether payment is settled for this request, honoring the configured
+// verification mode. Caches the result on the request so later synchronous
+// readers (telemetry/billing) see the same, facilitator-truthful value.
+async function resolveSettlement(request: Request, price: ToolPrice): Promise<CachedSettlement> {
+  const cached = (request as any)[SETTLEMENT_KEY] as CachedSettlement | undefined;
+  if (cached) return cached;
+
+  const mode = getPaymentVerificationMode();
+  let result: CachedSettlement = { verified: false };
+
+  if (mode === "trusted-proxy") {
+    // A trusted middleware/proxy has already verified settlement and set the
+    // header; we trust it because the proxy strips any client-supplied value.
+    result = { verified: request.header("x-okx-payment-verified")?.toLowerCase() === "true" };
+  } else if (mode === "x402-facilitator") {
+    const requirements = buildX402Requirements(request, price);
+    const settlement = await verifyAndSettle(paymentHeaderValue(request), requirements);
+    result = { verified: settlement.verified && settlement.settled, transaction: settlement.transaction };
+  }
+
+  (request as any)[SETTLEMENT_KEY] = result;
+  return result;
+}
+
+function buildX402Requirements(request: Request, price: ToolPrice): X402Requirements {
+  const network = process.env.OKX_SENTINEL_PAYMENT_NETWORK ?? "x-layer";
+  const scheme = process.env.OKX_SENTINEL_X402_SCHEME ?? "exact";
+  // x402 amounts are in the asset's smallest unit; default USDC has 6 decimals.
+  const decimals = Number(process.env.OKX_SENTINEL_PAYMENT_ASSET_DECIMALS ?? 6);
+  const maxAmountRequired = toSmallestUnit(price.priceUsd, decimals);
+  return {
+    scheme,
+    network,
+    resource: `${request.protocol}://${request.get("host") ?? ""}${request.originalUrl}`,
+    description: price.description,
+    payTo: process.env.OKX_SENTINEL_PAYMENT_RECIPIENT ?? "",
+    asset: process.env.OKX_SENTINEL_PAYMENT_ASSET ?? "",
+    maxAmountRequired,
+    maxTimeoutSeconds: Number(process.env.OKX_SENTINEL_X402_TIMEOUT_SECONDS ?? 60)
+  };
+}
+
+function toSmallestUnit(priceUsd: number, decimals: number): string {
+  // Avoid float drift: scale via string math on a fixed-decimal representation.
+  const fixed = priceUsd.toFixed(decimals);
+  const digits = fixed.replace(".", "").replace(/^0+(?=\d)/, "");
+  return digits === "" ? "0" : digits;
+}
+
+function paymentHeaderValue(request: Request): string | undefined {
+  return (
+    request.header("x-payment") ??
+    request.header("x-okx-payment") ??
+    request.header("authorization") ??
+    undefined
+  );
+}
+
 export function getPaymentMode(): "demo" | "enforce" {
   return process.env.OKX_SENTINEL_PAYMENT_MODE === "enforce" ? "enforce" : "demo";
 }
@@ -163,17 +249,32 @@ export function isPaymentProofPresented(request: Request): boolean {
   return Boolean(request.header("x-payment") || request.header("x-okx-payment") || authorization.toLowerCase().startsWith("x402 "));
 }
 
+export function getPaymentVerificationMode(): PaymentVerificationMode {
+  const value = process.env.OKX_SENTINEL_PAYMENT_VERIFICATION;
+  if (value === "trusted-proxy") return "trusted-proxy";
+  if (value === "x402-facilitator") return "x402-facilitator";
+  return "none";
+}
+
 export function isPaymentSettlementVerified(request: Request): boolean {
+  // Prefer a resolved settlement cached during maybeRequirePayment (the
+  // facilitator path writes it here). Fall back to the trusted-proxy header so
+  // synchronous callers behave identically to before when that mode is used.
+  const cached = (request as any)[SETTLEMENT_KEY] as CachedSettlement | undefined;
+  if (cached) return cached.verified;
+
   return (
-    process.env.OKX_SENTINEL_PAYMENT_VERIFICATION === "trusted-proxy" &&
+    getPaymentVerificationMode() === "trusted-proxy" &&
     request.header("x-okx-payment-verified")?.toLowerCase() === "true"
   );
 }
 
 export function isPaymentIntegrationReady(): boolean {
-  return Boolean(
-    getPaymentMode() === "enforce" &&
-      process.env.OKX_SENTINEL_PAYMENT_RECIPIENT &&
-      process.env.OKX_SENTINEL_PAYMENT_VERIFICATION === "trusted-proxy"
-  );
+  if (getPaymentMode() !== "enforce" || !process.env.OKX_SENTINEL_PAYMENT_RECIPIENT) {
+    return false;
+  }
+  const mode = getPaymentVerificationMode();
+  if (mode === "trusted-proxy") return true;
+  if (mode === "x402-facilitator") return isFacilitatorConfigured();
+  return false;
 }

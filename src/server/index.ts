@@ -301,7 +301,7 @@ function asyncHandler(handler: (request: Request) => Promise<RiskResponse>, opti
 function paidAsyncHandler(tool: PaidToolName, handler: (request: Request) => Promise<RiskResponse>) {
   return async (request: Request, response: Response, next: (error: unknown) => void) => {
     try {
-      if (!maybeRequirePayment(request, response, tool)) {
+      if (!(await maybeRequirePayment(request, response, tool))) {
         return;
       }
 
@@ -398,7 +398,7 @@ function mcpHandler(premium: boolean) {
           return;
         }
 
-        if (!maybeRequirePayment(request, response, paidTool)) {
+        if (!(await maybeRequirePayment(request, response, paidTool))) {
           return;
         }
       }
