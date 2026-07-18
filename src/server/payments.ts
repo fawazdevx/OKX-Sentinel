@@ -206,13 +206,30 @@ async function resolveSettlement(request: Request, price: ToolPrice): Promise<Ca
   return result;
 }
 
+// Default settlement stablecoin per CAIP-2 network, mirroring the OKX SDK's
+// DEFAULT_STABLECOINS table (@okxweb3/x402-evm). Used when
+// OKX_SENTINEL_PAYMENT_ASSET is left blank, so enforce mode works out of the
+// box on X Layer without hunting down a token contract address.
+const DEFAULT_STABLECOINS: Record<string, { address: string; decimals: number }> = {
+  "eip155:196": { address: "0x779ded0c9e1022225f8e0630b35a9b54be713736", decimals: 6 }, // X Layer mainnet USD₮0 (EIP-3009)
+  "eip155:1952": { address: "0x9e29b3aada05bf2d2c827af80bd28dc0b9b4fb0c", decimals: 6 } // X Layer testnet USD₮0
+};
+
 function buildX402Requirements(request: Request, price: ToolPrice): X402Requirements {
   // OKX x402 uses CAIP-2 network ids: eip155:196 = X Layer mainnet,
   // eip155:1952 = X Layer testnet.
   const network = process.env.OKX_SENTINEL_PAYMENT_NETWORK ?? "eip155:196";
   const scheme = process.env.OKX_SENTINEL_X402_SCHEME ?? "exact";
-  // x402 amounts are in the asset's smallest unit; default USDC has 6 decimals.
-  const decimals = Number(process.env.OKX_SENTINEL_PAYMENT_ASSET_DECIMALS ?? 6);
+  const defaultAsset = DEFAULT_STABLECOINS[network];
+  // Prefer an explicit asset override; otherwise fall back to the network's
+  // default stablecoin so a blank OKX_SENTINEL_PAYMENT_ASSET doesn't block
+  // enforce mode.
+  const asset = process.env.OKX_SENTINEL_PAYMENT_ASSET || defaultAsset?.address || "";
+  // x402 amounts are in the asset's smallest unit. Prefer an explicit decimals
+  // override, then the default stablecoin's decimals, then 6 (USDC/USD₮0).
+  const decimals = process.env.OKX_SENTINEL_PAYMENT_ASSET_DECIMALS
+    ? Number(process.env.OKX_SENTINEL_PAYMENT_ASSET_DECIMALS)
+    : defaultAsset?.decimals ?? 6;
   const maxAmountRequired = toSmallestUnit(price.priceUsd, decimals);
   return {
     scheme,
@@ -220,7 +237,7 @@ function buildX402Requirements(request: Request, price: ToolPrice): X402Requirem
     resource: `${request.protocol}://${request.get("host") ?? ""}${request.originalUrl}`,
     description: price.description,
     payTo: process.env.OKX_SENTINEL_PAYMENT_RECIPIENT ?? "",
-    asset: process.env.OKX_SENTINEL_PAYMENT_ASSET ?? "",
+    asset,
     maxAmountRequired,
     maxTimeoutSeconds: Number(process.env.OKX_SENTINEL_X402_TIMEOUT_SECONDS ?? 60)
   };
