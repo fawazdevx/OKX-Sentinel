@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import { isFacilitatorConfigured, verifyAndSettle, type X402Requirements } from "./x402";
+import { buildPaymentRequiredHeader, isFacilitatorConfigured, verifyAndSettle, type X402Requirements } from "./x402";
 
 // Per-request cache: when the x402 facilitator confirms settlement we stash the
 // result on the request object so the synchronous telemetry/billing readers
@@ -91,7 +91,7 @@ export function buildPricing() {
         ? "Premium endpoints require settlement verified by the configured trusted OKX Payment SDK/x402 middleware."
         : "Launch with the free A2MCP endpoint. Premium prices are a roadmap until OKX Payment SDK/x402 middleware verifies settlement.",
     settlementTarget: {
-      network: "X Layer",
+      network: getSettlementNetworkLabel(),
       recipient: process.env.OKX_SENTINEL_PAYMENT_RECIPIENT ?? "configure OKX_SENTINEL_PAYMENT_RECIPIENT",
       asset: "USDC or OKX Payment SDK-supported settlement asset"
     },
@@ -161,6 +161,15 @@ export async function maybeRequirePayment(request: Request, response: Response, 
     .setHeader("X-OKX-Sentinel-Payment-Mode", paymentMode);
   response.setHeader("X-OKX-Sentinel-Tool-Price-USD", price.priceUsd.toString());
   response.setHeader("X-OKX-Sentinel-Payment-Standard", "x402");
+  // Advertise the x402 requirements in the standard PAYMENT-REQUIRED header so an
+  // OKX Payment SDK client can construct and sign a payment. Without this header
+  // the SDK client throws "Invalid payment required response" and can never pay.
+  try {
+    response.setHeader("PAYMENT-REQUIRED", buildPaymentRequiredHeader(buildX402Requirements(request, price)));
+  } catch {
+    // If the header cannot be built (e.g. missing recipient), still return the
+    // JSON body below so the caller sees why payment is required.
+  }
   response.json({
     error: {
       message: "Payment required for premium OKX Sentinel A2MCP tool call.",
@@ -170,7 +179,7 @@ export async function maybeRequirePayment(request: Request, response: Response, 
       standard: "x402",
       tool: price.tool,
       priceUsd: price.priceUsd,
-      settlementNetwork: "X Layer",
+      settlementNetwork: getSettlementNetworkLabel(),
       recipient: process.env.OKX_SENTINEL_PAYMENT_RECIPIENT ?? "configure OKX_SENTINEL_PAYMENT_RECIPIENT",
       proofPresented: isPaymentProofPresented(request),
       settlementVerified: false,
@@ -252,6 +261,11 @@ function toSmallestUnit(priceUsd: number, decimals: number): string {
 
 function paymentHeaderValue(request: Request): string | undefined {
   return (
+    // PAYMENT-SIGNATURE is the header the official OKX x402 client SDK sends
+    // (matches the OKX server middleware, which reads "payment-signature").
+    // The x-payment/x-okx-payment/authorization fallbacks stay for
+    // hand-rolled or legacy callers.
+    request.header("payment-signature") ??
     request.header("x-payment") ??
     request.header("x-okx-payment") ??
     request.header("authorization") ??
@@ -265,7 +279,12 @@ export function getPaymentMode(): "demo" | "enforce" {
 
 export function isPaymentProofPresented(request: Request): boolean {
   const authorization = request.header("authorization") ?? "";
-  return Boolean(request.header("x-payment") || request.header("x-okx-payment") || authorization.toLowerCase().startsWith("x402 "));
+  return Boolean(
+    request.header("payment-signature") ||
+      request.header("x-payment") ||
+      request.header("x-okx-payment") ||
+      authorization.toLowerCase().startsWith("x402 ")
+  );
 }
 
 export function getPaymentVerificationMode(): PaymentVerificationMode {
@@ -273,6 +292,21 @@ export function getPaymentVerificationMode(): PaymentVerificationMode {
   if (value === "trusted-proxy") return "trusted-proxy";
   if (value === "x402-facilitator") return "x402-facilitator";
   return "none";
+}
+
+// Human-readable label for the configured CAIP-2 settlement network, so 402
+// responses and pricing report the real chain (mainnet vs testnet) instead of a
+// hardcoded string.
+export function getSettlementNetworkLabel(): string {
+  const network = process.env.OKX_SENTINEL_PAYMENT_NETWORK ?? "eip155:196";
+  switch (network) {
+    case "eip155:196":
+      return "X Layer";
+    case "eip155:1952":
+      return "X Layer Testnet";
+    default:
+      return network;
+  }
 }
 
 export function isPaymentSettlementVerified(request: Request): boolean {

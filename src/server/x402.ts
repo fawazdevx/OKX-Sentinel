@@ -13,8 +13,8 @@
 // OKX_SENTINEL_PAYMENT_VERIFICATION=x402-facilitator so the default deploy is
 // unaffected until OKX credentials are configured.
 
-import { OKXFacilitatorClient } from "@okxweb3/x402-core";
-import { decodePaymentSignatureHeader } from "@okxweb3/x402-core/http";
+import { OKXFacilitatorClient, x402Version } from "@okxweb3/x402-core";
+import { decodePaymentSignatureHeader, encodePaymentRequiredHeader } from "@okxweb3/x402-core/http";
 import type { PaymentPayload, PaymentRequirements } from "@okxweb3/x402-core/types";
 
 export interface X402Requirements {
@@ -112,6 +112,22 @@ function toSdkRequirements(requirements: X402Requirements): PaymentRequirements 
     maxTimeoutSeconds: requirements.maxTimeoutSeconds,
     extra: { resource: requirements.resource, description: requirements.description }
   };
+}
+
+// Build the base64 `PAYMENT-REQUIRED` header value the OKX x402 client SDK
+// reads to construct a payment. The SDK's getPaymentRequiredResponse() throws
+// when this header is absent, so a 402 must advertise it or a paying caller
+// can never build a signed payment.
+export function buildPaymentRequiredHeader(requirements: X402Requirements): string {
+  return encodePaymentRequiredHeader({
+    x402Version,
+    resource: {
+      url: requirements.resource,
+      description: requirements.description,
+      mimeType: "application/json"
+    },
+    accepts: [toSdkRequirements(requirements)]
+  });
 }
 
 // Guard a facilitator call against a hung serverless request.
