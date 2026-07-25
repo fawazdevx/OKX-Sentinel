@@ -86,6 +86,11 @@ type Tone = "safe" | "caution" | "danger" | "critical" | "neutral";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "";
 
+// The internal readiness/judging board (self-assessment with "Config needed"
+// flags) is hidden from end users by default. Set VITE_SHOW_SYSTEM_STATUS=true
+// to surface it for operator/hackathon-judging builds.
+const showSystemStatus = import.meta.env.VITE_SHOW_SYSTEM_STATUS === "true";
+
 const initialForm: FormState = {
   scanType: "policy",
   chainId: exampleInputs.policy.chainId,
@@ -532,7 +537,7 @@ function App() {
 
           <ActivityStrip traction={opsState.traction} />
 
-          <SystemStatus readiness={opsState.readiness} />
+          {showSystemStatus && <SystemStatus readiness={opsState.readiness} />}
 
           <DeveloperPanel result={activeResult} onCopy={() => void copyJson()} copied={copied} />
         </section>
