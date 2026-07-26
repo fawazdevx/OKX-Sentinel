@@ -94,10 +94,12 @@ const showSystemStatus = import.meta.env.VITE_SHOW_SYSTEM_STATUS === "true";
 const initialForm: FormState = {
   scanType: "policy",
   chainId: exampleInputs.policy.chainId,
-  wallet: exampleWallet,
-  tokenAddress: exampleToken,
-  spender: exampleSpender,
-  txData: exampleUnlimitedApprovalCalldata,
+  // Address / token / calldata fields start empty so users paste their own
+  // input. The "load example" buttons seed demo values on demand.
+  wallet: "",
+  tokenAddress: "",
+  spender: "",
+  txData: "",
   agentId: exampleInputs.policy.agentId ?? "okx-agent-risk-gate",
   actionValueUsd: exampleInputs.policy.actionValueUsd ?? 500,
   maxAllowedRiskScore: exampleInputs.policy.policy?.maxAllowedRiskScore ?? 64,
@@ -163,7 +165,8 @@ function App() {
   const [copied, setCopied] = React.useState(false);
 
   React.useEffect(() => {
-    void runScan(initialForm);
+    // Do not auto-scan on load: inputs are empty by default and the user
+    // supplies their own address/token/calldata before scanning.
     void refreshOps();
   }, []);
 
